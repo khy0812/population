@@ -19,7 +19,7 @@ def load_data():
     # GitHub Zip 파일 URL
     url = "https://github.com/khy0812/population/raw/main/population_ts_yearly_gender%20(1).zip"
     
-    # pandas는 zip 파일 내의 csv를 자동으로 압축 해제하여 읽을 수 있습니다.
+    # pandas는 zip 파일 내의 csv를 자동으로 압축 해제하여 읽습니다.
     df = pd.read_csv(url)
     
     # 데이터에 존재하는 가장 최신 연도만 추출
@@ -66,36 +66,68 @@ if selected_row.empty:
     st.warning("선택한 지역의 데이터가 없습니다.")
     st.stop()
 
-# 5. 연령별/성별 인구 데이터 정리
-# '남_0세', '여_0세' ~ '남_100세 이상', '여_100세 이상' 라벨 목록 생성
+# 5. 연령별/성별 인구 데이터 정리 및 통계 계산
 age_categories = [f"{i}세" for i in range(100)] + ["100세 이상"]
 
 male_pop = []
 female_pop = []
+total_pop_by_age = []  # 각 나이별 총 인구수 (평균 연령 계산용)
 
-# 해당 행에서 연령별 남/여 인구수 추출
 row_data = selected_row.iloc[0]
 
-for age in age_categories:
+# 연령별 데이터 추출
+for age_idx, age in enumerate(age_categories):
     m_col = f"남_{age}"
     f_col = f"여_{age}"
     
-    # 값이 없거나 결측치일 경우 0 처리
     m_val = row_data[m_col] if m_col in row_data and pd.notna(row_data[m_col]) else 0
     f_val = row_data[f_col] if f_col in row_data and pd.notna(row_data[f_col]) else 0
     
     male_pop.append(m_val)
     female_pop.append(f_val)
+    total_pop_by_age.append(m_val + f_val)
 
 # 남성 인구수는 피라미드 좌측에 표시하기 위해 음수로 변환
 male_pop_neg = [-val for val in male_pop]
 
-# 6. Plotly 인구 피라미드 시각화
+# --- 핵심 주요 지표 계산 ---
+total_population = sum(total_pop_by_age)  # 총인구
+
+if total_population > 0:
+    # 1) 평균 연령 계산 (가중 평균: 0~99세는 나이 값, 100세 이상은 100세로 계산)
+    weighted_age_sum = sum(count * (idx if idx < 100 else 100) for idx, count in enumerate(total_pop_by_age))
+    avg_age = weighted_age_sum / total_population
+
+    # 2) 유소년(0~14세) 및 고령(65세 이상) 인구수 계산
+    youth_pop = sum(total_pop_by_age[0:15])        # 0세~14세
+    elderly_pop = sum(total_pop_by_age[65:])        # 65세 이상
+    
+    # 3) 비율 계산 (%)
+    aging_rate = (elderly_pop / total_population) * 100
+    youth_rate = (youth_pop / total_population) * 100
+else:
+    avg_age = 0.0
+    aging_rate = 0.0
+    youth_rate = 0.0
+
+# 6. 그래프 위에 지표 카드 3개 표시 (총인구, 평균연령, 고령화율)
+m1, m2, m3 = st.columns(3)
+
+m1.metric("총 인구수", f"{total_population:,} 명")
+m2.metric("평균 연령", f"{avg_age:.1f} 세")
+
+# 고령화율 20% 이상 시 초고령사회 주의 표시 (⚠️)
+if aging_rate >= 20.0:
+    m3.metric("고령화율 (65세+)", f"{aging_rate:.1f} %", delta="⚠️ 초고령 (20% 이상)", delta_color="inverse")
+else:
+    m3.metric("고령화율 (65세+)", f"{aging_rate:.1f} %")
+
+st.markdown("---")
+
+# 7. Plotly 인구 피라미드 시각화
 fig = go.Figure()
 
-# 따뜻한 톤 칼라 설정 (남성: 따뜻한 코랄/오렌지계열, 여성: 따뜻한 피치/핑크계열)
-# (취향에 맞게 조정 가능합니다)
-MALE_COLOR = '#E07A5F'    # 코랄 브라운 / 오렌지 톤
+MALE_COLOR = '#E07A5F'    # 코랄 브라운 톤
 FEMALE_COLOR = '#F4A261'  # 피치 오렌지 톤
 
 # 남성 가로 막대그래프 (왼쪽)
@@ -105,7 +137,6 @@ fig.add_trace(go.Bar(
     name='남성',
     orientation='h',
     marker=dict(color=MALE_COLOR),
-    # 마우스 오버 시 실제 양수 값 표시
     customdata=male_pop,
     hovertemplate='<b>%{y}</b><br>남성 인구: %{customdata:,}명<extra></extra>'
 ))
@@ -117,13 +148,11 @@ fig.add_trace(go.Bar(
     name='여성',
     orientation='h',
     marker=dict(color=FEMALE_COLOR),
-    hovertemplate='<b>%{y}</b><br>여성 인구: %{female_pop:,}명<extra></extra>'.replace('%{female_pop:,}', '%{x:,}')
+    hovertemplate='<b>%{y}</b><br>여성 인구: %{x:,}명<extra></extra>'
 ))
 
-# 그래프 레이아웃 설정
-# x축 눈금 표시를 절대값(양수)으로 변환하기 위한 처리
+# x축 눈금 양수 변환
 max_val = max(max(male_pop), max(female_pop)) if (male_pop and female_pop) else 100
-# 적절한 눈금 간격 계산
 step = max(1, int(max_val / 4))
 tick_vals = list(range(-((max_val // step + 1) * step), (max_val // step + 2) * step, step))
 tick_text = [f"{abs(v):,}" for v in tick_vals]
@@ -144,8 +173,7 @@ fig.update_layout(
     ),
     yaxis=dict(
         title="연령",
-        # 축 뒤집기(autorange="reversed")나 값 크기 정렬 없이, 
-        # categoryarray로 '0세'가 맨 아래, '100세 이상'이 맨 위로 오도록 완전 고정
+        # 0세가 맨 아래, 100세 이상이 맨 위로 순서 고정
         type='category',
         categoryorder='array',
         categoryarray=age_categories,
@@ -164,15 +192,16 @@ fig.update_layout(
     margin=dict(l=60, r=40, t=80, b=50)
 )
 
-# 7. 화면에 그래프 및 주요 통계 출력
 st.plotly_chart(fig, use_container_width=True)
 
-# 요약 데이터 카드
-tot_m = sum(male_pop)
-tot_f = sum(female_pop)
-tot_all = tot_m + tot_f
+# 8. 피라미드 하단 자동 한 줄 설명 (아이가 많은지 vs 어르신이 많은지)
+if aging_rate >= 20.0 and youth_rate < 10.0:
+    summary_text = "👴 **어르신 비중이 매우 높은 동네입니다.** (고령화율 20% 이상 초고령 지역)"
+elif aging_rate > youth_rate:
+    summary_text = "👵 **아이보다 어르신 비중이 더 높은 동네입니다.**"
+elif youth_rate > aging_rate:
+    summary_text = "👶 **어르신보다 아이 비중이 더 높은 젊은 동네입니다.**"
+else:
+    summary_text = "⚖️ **아이와 어르신 비중이 균형을 이루고 있는 동네입니다.**"
 
-col_m1, col_m2, col_m3 = st.columns(3)
-col_m1.metric("총 인구수", f"{tot_all:,} 명")
-col_m2.metric("남성 인구수", f"{tot_m:,} 명")
-col_m3.metric("여성 인구수", f"{tot_f:,} 명")
+st.info(f"💡 **이 동네는 어떤가요?** {summary_text} (유소년 {youth_rate:.1f}% / 고령인구 {aging_rate:.1f}%)")
